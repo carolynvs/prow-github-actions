@@ -1,15 +1,29 @@
 import nock from 'nock'
 
+import {Context} from '@actions/github/lib/context'
 import {handleIssueComment} from '../../src/issueComment/handleIssueComment'
+import {handleReview} from '../../src/issueComment/handleReview'
 
 import * as utils from '../testUtils'
 
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
+import reviewEvent from '../fixtures/pullReq/pullReqReviewEvent.json'
 import issuePayload from '../fixtures/issues/issue.json'
+import { WebhookPayload } from '@actions/github/lib/interfaces'
 
 nock.disableNetConnect()
 
-describe('lgtm', () => {
+// Run the test suite for both the issue_comment and pull_request_review events
+type ActionHandler = (context: Context) => Promise<void>;
+type SetCommentHandler = (payload: any, body: string) => void;
+const getLGTMTestCases = (): Array<[string,WebhookPayload,SetCommentHandler,ActionHandler]> => {
+  return [
+    ['issue_comment', issueCommentEvent, (payload, body) => {payload.comment.body = body}, handleIssueComment],
+    ['pull_request_review', reviewEvent, (payload, body) => {payload.review.body = body}, handleReview],
+  ]
+}
+
+describe.each(getLGTMTestCases())("event: %s", (eventName, payload, setComment, eventHandler)=>{
   beforeEach(() => {
     nock.cleanAll()
     utils.setupActionsEnv('/lgtm')
@@ -25,8 +39,8 @@ describe('lgtm', () => {
   })
 
   it('labels the issue with the lgtm label', async () => {
-    issueCommentEvent.comment.body = '/lgtm'
-    const commentContext = new utils.mockContext(issueCommentEvent)
+    setComment(payload, '/lgtm')
+    const commentContext = new utils.mockContext(payload, eventName)
 
     let parsedBody = undefined
     const scope = nock(utils.api)
@@ -46,15 +60,15 @@ describe('lgtm', () => {
       .get('/repos/Codertocat/Hello-World/contents/OWNERS')
       .reply(404)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
     expect(parsedBody).toEqual({
       labels: ['lgtm']
     })
   })
 
   it('removes the lgtm label with /lgtm cancel', async () => {
-    issueCommentEvent.comment.body = '/lgtm cancel'
-    const commentContext = new utils.mockContext(issueCommentEvent)
+    setComment(payload, '/lgtm cancel')
+    const commentContext = new utils.mockContext(payload, eventName)
 
     issuePayload.labels.push({
       id: 1,
@@ -84,12 +98,12 @@ describe('lgtm', () => {
       .get('/repos/Codertocat/Hello-World/contents/OWNERS')
       .reply(404)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
   })
 
   it('adds label if commenter is collaborator', async () => {
-    issueCommentEvent.comment.body = '/lgtm'
-    const commentContext = new utils.mockContext(issueCommentEvent)
+    setComment(payload, '/lgtm')
+    const commentContext = new utils.mockContext(payload, eventName)
 
     let parsedBody = undefined
     const scope = nock(utils.api)
@@ -109,7 +123,7 @@ describe('lgtm', () => {
       .get('/repos/Codertocat/Hello-World/contents/OWNERS')
       .reply(404)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
     expect(parsedBody).toEqual({
       labels: ['lgtm']
     })
@@ -145,10 +159,10 @@ approvers:
       })
       .reply(200)
 
-    issueCommentEvent.comment.body = '/lgtm'
-    const commentContext = new utils.mockContext(issueCommentEvent)
+    setComment(payload, '/lgtm')
+    const commentContext = new utils.mockContext(payload, eventName)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
   })
 
   it('fails if commenter is not org member or collaborator', async () => {
@@ -165,15 +179,15 @@ approvers:
       .get('/repos/Codertocat/Hello-World/contents/OWNERS')
       .reply(404)
 
-    issueCommentEvent.comment.body = '/lgtm'
-    const commentContext = new utils.mockContext(issueCommentEvent)
+    setComment(payload, '/lgtm')
+    const commentContext = new utils.mockContext(payload, eventName)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
   })
 
   it('adds label if commenter is reviewer in OWNERS', async () => {
     issueCommentEvent.comment.body = '/lgtm'
-    const commentContext = new utils.mockContext(issueCommentEvent)
+    const commentContext = new utils.mockContext(payload, eventName)
 
     let parsedBody = undefined
     const scope = nock(utils.api)
@@ -202,7 +216,7 @@ reviewers:
       .get('/repos/Codertocat/Hello-World/contents/OWNERS')
       .reply(200, contentResponse)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
     expect(parsedBody).toEqual({
       labels: ['lgtm']
     })

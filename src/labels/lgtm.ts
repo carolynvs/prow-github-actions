@@ -1,12 +1,11 @@
 import * as github from '@actions/github'
-
-import {Context} from '@actions/github/lib/context'
 import * as core from '@actions/core'
+import {Context} from '@actions/github/lib/context'
 
 import {getCommandArgs} from '../utils/command'
 import {labelIssue, cancelLabel} from '../utils/labeling'
 import {assertAuthorizedByOwnersOrMembership} from '../utils/auth'
-import {createComment} from '../utils/comments'
+import {asEventWithComment, createComment} from '../utils/comments'
 
 /**
  * /lgtm will add the lgtm label.
@@ -21,30 +20,22 @@ export const lgtm = async (
   const token = core.getInput('github-token', {required: true})
   const octokit = new github.GitHub(token)
 
-  const issueNumber: number | undefined = context.payload.issue?.number
-  const commentBody: string = context.payload['comment']['body']
-  const commenterId: string = context.payload['comment']['user']['login']
-
-  if (issueNumber === undefined) {
-    throw new Error(
-      `github context payload missing issue number: ${context.payload}`
-    )
-  }
+  // Get a common representation of the triggering event
+  const commentEvent = asEventWithComment(context)
 
   try {
     await assertAuthorizedByOwnersOrMembership(
       octokit,
       context,
       'reviewers',
-      commenterId
+      commentEvent.comment.user.login
     )
   } catch (e) {
     const msg = `Cannot apply the lgtm label because ${e}`
-    core.error(msg)
 
     // Try to reply back that the user is unauthorized
     try {
-      createComment(octokit, context, issueNumber, msg)
+      createComment(octokit, context, commentEvent.parent.number, msg)
     } catch (commentE) {
       // Log the comment error but continue to throw the original auth error
       core.error(`Could not comment with an auth error: ${commentE}`)
@@ -52,17 +43,18 @@ export const lgtm = async (
     throw e
   }
 
+  const commentBody = commentEvent.comment.body || ''
   const commentArgs: string[] = getCommandArgs('/lgtm', commentBody)
 
   // check if canceling last review
   if (commentArgs.length !== 0 && commentArgs[0] === 'cancel') {
     try {
-      await cancelLabel(octokit, context, issueNumber, 'lgtm')
+      await cancelLabel(octokit, context, commentEvent.parent.number, 'lgtm')
     } catch (e) {
       throw new Error(`could not remove latest review: ${e}`)
     }
     return
   }
 
-  labelIssue(octokit, context, issueNumber, ['lgtm'])
+  labelIssue(octokit, context, commentEvent.parent.number, ['lgtm'])
 }

@@ -4411,6 +4411,7 @@ const github = __importStar(__webpack_require__(469));
 const handleIssueComment_1 = __webpack_require__(755);
 const handlePullReq_1 = __webpack_require__(109);
 const handleCronJob_1 = __webpack_require__(779);
+const handleReview_1 = __webpack_require__(502);
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
@@ -4420,6 +4421,9 @@ function run() {
                     break;
                 case 'pull_request':
                     handlePullReq_1.handlePullReq();
+                    break;
+                case 'pull_request_review':
+                    handleReview_1.handleReview();
                     break;
                 case 'schedule':
                     handleCronJob_1.handleCronJobs();
@@ -10923,6 +10927,77 @@ exports.lock = (context = github.context) => __awaiter(void 0, void 0, void 0, f
 
 /***/ }),
 
+/***/ 502:
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
+    result["default"] = mod;
+    return result;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const core = __importStar(__webpack_require__(470));
+const github = __importStar(__webpack_require__(469));
+const approve_1 = __webpack_require__(575);
+const lgtm_1 = __webpack_require__(541);
+/**
+ * This Method handles any pull request reviews
+ * A user should define which of the commands they want to run in their workflow yaml
+ *
+ * @param context - the github context of the current action event
+ */
+exports.handleReview = (context = github.context) => __awaiter(void 0, void 0, void 0, function* () {
+    const commandConfig = core
+        .getInput('prow-commands', { required: false })
+        .replace(/\n/g, ' ')
+        .split(' ');
+    const commentBody = context.payload['review']['body'];
+    yield Promise.all(commandConfig.map((command) => __awaiter(void 0, void 0, void 0, function* () {
+        if (commentBody.includes(command)) {
+            switch (command) {
+                case '/approve':
+                    return yield approve_1.approve(context).catch((e) => __awaiter(void 0, void 0, void 0, function* () {
+                        return e;
+                    }));
+                case '/lgtm':
+                    return yield lgtm_1.lgtm(context).catch((e) => __awaiter(void 0, void 0, void 0, function* () {
+                        return e;
+                    }));
+                case '':
+                    return new Error(`please provide a list of space delimited commands / jobs to run. None found`);
+                default:
+                    return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
+            }
+        }
+    })))
+        .then(results => {
+        for (const result of results) {
+            if (result instanceof Error) {
+                throw new Error(`error handling review: ${result}`);
+            }
+        }
+    })
+        .catch(e => {
+        core.setFailed(`${e}`);
+    });
+});
+
+
+/***/ }),
+
 /***/ 505:
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
@@ -11938,24 +12013,18 @@ const comments_1 = __webpack_require__(646);
  * @param context - the github actions event context
  */
 exports.lgtm = (context = github.context) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
     const token = core.getInput('github-token', { required: true });
     const octokit = new github.GitHub(token);
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commentBody = context.payload['comment']['body'];
-    const commenterId = context.payload['comment']['user']['login'];
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
+    // Get a common representation of the triggering event
+    const commentEvent = comments_1.asEventWithComment(context);
     try {
-        yield auth_1.assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commenterId);
+        yield auth_1.assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commentEvent.comment.user.login);
     }
     catch (e) {
         const msg = `Cannot apply the lgtm label because ${e}`;
-        core.error(msg);
         // Try to reply back that the user is unauthorized
         try {
-            comments_1.createComment(octokit, context, issueNumber, msg);
+            comments_1.createComment(octokit, context, commentEvent.parent.number, msg);
         }
         catch (commentE) {
             // Log the comment error but continue to throw the original auth error
@@ -11963,18 +12032,19 @@ exports.lgtm = (context = github.context) => __awaiter(void 0, void 0, void 0, f
         }
         throw e;
     }
+    const commentBody = commentEvent.comment.body || '';
     const commentArgs = command_1.getCommandArgs('/lgtm', commentBody);
     // check if canceling last review
     if (commentArgs.length !== 0 && commentArgs[0] === 'cancel') {
         try {
-            yield labeling_1.cancelLabel(octokit, context, issueNumber, 'lgtm');
+            yield labeling_1.cancelLabel(octokit, context, commentEvent.parent.number, 'lgtm');
         }
         catch (e) {
             throw new Error(`could not remove latest review: ${e}`);
         }
         return;
     }
-    labeling_1.labelIssue(octokit, context, issueNumber, ['lgtm']);
+    labeling_1.labelIssue(octokit, context, commentEvent.parent.number, ['lgtm']);
 });
 
 
@@ -12419,25 +12489,19 @@ const comments_1 = __webpack_require__(646);
  * @param context - the github actions event context
  */
 exports.approve = (context = github.context) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
     core.debug(`starting approve job`);
     const token = core.getInput('github-token', { required: true });
     const octokit = new github.GitHub(token);
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commentBody = context.payload['comment']['body'];
-    const commenterLogin = context.payload['comment']['user']['login'];
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
+    // Get a common representation of the triggering event
+    const commentEvent = comments_1.asEventWithComment(context);
     try {
-        yield auth_1.assertAuthorizedByOwnersOrMembership(octokit, context, 'approvers', commenterLogin);
+        yield auth_1.assertAuthorizedByOwnersOrMembership(octokit, context, 'approvers', commentEvent.comment.user.login);
     }
     catch (e) {
         const msg = `Cannot approve the pull request: ${e}`;
-        core.error(msg);
         // Try to reply back that the user is unauthorized
         try {
-            comments_1.createComment(octokit, context, issueNumber, msg);
+            comments_1.createComment(octokit, context, commentEvent.parent.number, msg);
         }
         catch (commentE) {
             // Log the comment error but continue to throw the original auth error
@@ -12445,11 +12509,12 @@ exports.approve = (context = github.context) => __awaiter(void 0, void 0, void 0
         }
         throw e;
     }
+    const commentBody = commentEvent.comment.body || '';
     const commentArgs = command_1.getCommandArgs('/approve', commentBody);
     // check if canceling last review
     if (commentArgs.length !== 0 && commentArgs[0] === 'cancel') {
         try {
-            yield cancel(octokit, context, issueNumber, commenterLogin);
+            yield cancel(octokit, context, commentEvent.parent.number, commentEvent.comment.user.login);
         }
         catch (e) {
             throw new Error(`could not remove latest review: ${e}`);
@@ -12458,7 +12523,7 @@ exports.approve = (context = github.context) => __awaiter(void 0, void 0, void 0
     }
     try {
         core.debug(`creating a review`);
-        yield octokit.pulls.createReview(Object.assign(Object.assign({}, context.repo), { pull_number: issueNumber, event: 'APPROVE', comments: [] }));
+        yield octokit.pulls.createReview(Object.assign(Object.assign({}, context.repo), { pull_number: commentEvent.parent.number, event: 'APPROVE', comments: [] }));
     }
     catch (e) {
         throw new Error(`could not create review: ${e}`);
@@ -13934,7 +13999,7 @@ module.exports = new Type('tag:yaml.org,2002:merge', {
 /***/ }),
 
 /***/ 646:
-/***/ (function(__unusedmodule, exports) {
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
 
 "use strict";
 
@@ -13947,7 +14012,15 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
+    result["default"] = mod;
+    return result;
+};
 Object.defineProperty(exports, "__esModule", { value: true });
+const github = __importStar(__webpack_require__(469));
 /**
  * createComment comments on the specified issue or pull request
  *
@@ -13964,6 +14037,41 @@ exports.createComment = (octokit, context, issueNum, message) => __awaiter(void 
         throw new Error(`could not add comment: ${e}`);
     }
 });
+/**
+ * asEventWithComment identifies the type of event and returns an EventWithComment
+ * containing the comment associated with the event.
+ * @param context - the github actions event context
+ */
+exports.asEventWithComment = (context = github.context) => {
+    switch (context.eventName) {
+        case 'issue_comment': {
+            const commentEvt = context.payload;
+            if (commentEvt === undefined) {
+                throw new Error(`github context eventName is issue_comment but the payload is not an IssueCommentEvent`);
+            }
+            return {
+                comment: commentEvt.comment,
+                parent: commentEvt.issue
+            };
+        }
+        case 'pull_request_review': {
+            const reviewEvt = context.payload;
+            if (reviewEvt === undefined) {
+                throw new Error(`github context eventName is pull_request_review but the payload is not an PullRequestReviewEvent`);
+            }
+            return {
+                comment: reviewEvt.review,
+                parent: reviewEvt.pull_request
+            };
+        }
+        case '': {
+            throw new Error(`github context does not have an eventName set`);
+        }
+        default: {
+            throw new Error(`github context payload did not contain an issue or pull request for event: ${context.eventName}`);
+        }
+    }
+};
 
 
 /***/ }),

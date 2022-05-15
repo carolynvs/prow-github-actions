@@ -5,10 +5,21 @@ export const api = 'https://api.github.com'
 
 // Generate and create a fake context to use
 export const mockContext = class extends Context {
-  constructor(payload: WebhookPayload) {
+  constructor(payload: WebhookPayload, eventName: string = '') {
     super()
     this.payload = payload
+    this.eventName = eventName
   }
+}
+
+/** Create a mocked IssueCommentEvent from the specified payload */
+export const mockIssueComment = (payload: WebhookPayload): Context => {
+  return new mockContext(payload, 'issue_comment')
+}
+
+/** Create a mocked PullRequestReviewEvent from the specified payload */
+export const mockReview = (payload: WebhookPayload): Context => {
+  return new mockContext(payload, 'pull_request_review')
 }
 
 export const setupActionsEnv = (command: string = '') => {

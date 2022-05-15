@@ -5,7 +5,7 @@ import {Octokit} from '@octokit/rest'
 import {Context} from '@actions/github/lib/context'
 import {getCommandArgs} from '../utils/command'
 import {assertAuthorizedByOwnersOrMembership} from '../utils/auth'
-import {createComment} from '../utils/comments'
+import {asEventWithComment, createComment} from '../utils/comments'
 
 /**
  * the /approve command will create a "approve" review
@@ -24,30 +24,22 @@ export const approve = async (
   const token = core.getInput('github-token', {required: true})
   const octokit = new github.GitHub(token)
 
-  const issueNumber: number | undefined = context.payload.issue?.number
-  const commentBody: string = context.payload['comment']['body']
-  const commenterLogin: string = context.payload['comment']['user']['login']
-
-  if (issueNumber === undefined) {
-    throw new Error(
-      `github context payload missing issue number: ${context.payload}`
-    )
-  }
+  // Get a common representation of the triggering event
+  const commentEvent = asEventWithComment(context)
 
   try {
     await assertAuthorizedByOwnersOrMembership(
       octokit,
       context,
       'approvers',
-      commenterLogin
+      commentEvent.comment.user.login
     )
   } catch (e) {
     const msg = `Cannot approve the pull request: ${e}`
-    core.error(msg)
 
     // Try to reply back that the user is unauthorized
     try {
-      createComment(octokit, context, issueNumber, msg)
+      createComment(octokit, context, commentEvent.parent.number, msg)
     } catch (commentE) {
       // Log the comment error but continue to throw the original auth error
       core.error(`Could not comment with an auth error: ${commentE}`)
@@ -55,12 +47,18 @@ export const approve = async (
     throw e
   }
 
+  const commentBody = commentEvent.comment.body || ''
   const commentArgs: string[] = getCommandArgs('/approve', commentBody)
 
   // check if canceling last review
   if (commentArgs.length !== 0 && commentArgs[0] === 'cancel') {
     try {
-      await cancel(octokit, context, issueNumber, commenterLogin)
+      await cancel(
+        octokit,
+        context,
+        commentEvent.parent.number,
+        commentEvent.comment.user.login
+      )
     } catch (e) {
       throw new Error(`could not remove latest review: ${e}`)
     }
@@ -71,7 +69,7 @@ export const approve = async (
     core.debug(`creating a review`)
     await octokit.pulls.createReview({
       ...context.repo,
-      pull_number: issueNumber,
+      pull_number: commentEvent.parent.number,
       event: 'APPROVE',
       comments: []
     })

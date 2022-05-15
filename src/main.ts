@@ -3,6 +3,7 @@ import * as github from '@actions/github'
 import {handleIssueComment} from './issueComment/handleIssueComment'
 import {handlePullReq} from './pullReq/handlePullReq'
 import {handleCronJobs} from './cronJobs/handleCronJob'
+import {handleReview} from './issueComment/handleReview'
 
 async function run(): Promise<void> {
   try {
@@ -13,6 +14,10 @@ async function run(): Promise<void> {
 
       case 'pull_request':
         handlePullReq()
+        break
+
+      case 'pull_request_review':
+        handleReview()
         break
 
       case 'schedule':

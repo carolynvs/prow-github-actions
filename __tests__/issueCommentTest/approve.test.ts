@@ -1,15 +1,30 @@
 import nock from 'nock'
 
 import {handleIssueComment} from '../../src/issueComment/handleIssueComment'
+import { handleReview } from '../../src/issueComment/handleReview'
 
 import * as utils from '../testUtils'
 
 import pullReqListReviews from '../fixtures/pullReq/pullReqListReviews.json'
-import issueCommentEventAssign from '../fixtures/issues/assign/issueCommentEventAssign.json'
+import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
+import reviewEvent from '../fixtures/pullReq/pullReqReviewEvent.json'
+
+import { Context } from '@actions/github/lib/context'
+import { WebhookPayload } from '@actions/github/lib/interfaces'
 
 nock.disableNetConnect()
 
-describe('/approve', () => {
+// Run the test suite for both the issue_comment and pull_request_review events
+type ActionHandler = (context: Context) => Promise<void>;
+type SetCommentHandler = (payload: any, body: string) => void;
+const getLGTMTestCases = (): Array<[string,WebhookPayload,SetCommentHandler,ActionHandler]> => {
+  return [
+    ['issue_comment', issueCommentEvent, (payload, body) => {payload.comment.body = body}, handleIssueComment],
+    ['pull_request_review', reviewEvent, (payload, body) => {payload.review.body = body}, handleReview],
+  ]
+}
+
+describe.each(getLGTMTestCases())("event: %s", (eventName, payload, setComment, eventHandler)=>{
   beforeEach(() => {
     nock.cleanAll()
     utils.setupActionsEnv('/approve')
@@ -55,10 +70,10 @@ reviewers:
       })
       .reply(200)
 
-    issueCommentEventAssign.comment.body = '/approve'
-    const commentContext = new utils.mockContext(issueCommentEventAssign)
+    setComment(payload, '/approve')
+    const commentContext = new utils.mockContext(payload, eventName)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
   })
 
   it('fails if commenter is not an org member or collaborator', async () => {
@@ -76,10 +91,10 @@ reviewers:
       .get('/repos/Codertocat/Hello-World/contents/OWNERS')
       .reply(404)
 
-    issueCommentEventAssign.comment.body = '/approve'
-    const commentContext = new utils.mockContext(issueCommentEventAssign)
+    setComment(payload, '/approve')
+    const commentContext = new utils.mockContext(payload, eventName)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
   })
 
   it('approves if commenter is an approver in OWNERS', async () => {
@@ -111,10 +126,10 @@ approvers:
       })
       .reply(200)
 
-    issueCommentEventAssign.comment.body = '/approve'
-    const commentContext = new utils.mockContext(issueCommentEventAssign)
+    setComment(payload, '/approve')
+    const commentContext = new utils.mockContext(payload, eventName)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
   })
 
   it('approves if commenter is an org member', async () => {
@@ -137,17 +152,17 @@ approvers:
       })
       .reply(200)
 
-    issueCommentEventAssign.comment.body = '/approve'
-    const commentContext = new utils.mockContext(issueCommentEventAssign)
+    setComment(payload, '/approve')
+    const commentContext = new utils.mockContext(payload, eventName)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
   })
 
   it('removes approval with the /approve cancel command if approver in OWNERS file', async () => {
     const owners = Buffer.from(
       `
 approvers:
-- some-user
+- Codertocat
 `
     ).toString('base64')
 
@@ -172,18 +187,17 @@ approvers:
         '/repos/Codertocat/Hello-World/pulls/1/reviews/80/dismissals',
         body => {
           expect(body).toMatchObject({
-            message: `Canceled through prow-github-actions by @some-user`
+            message: `Canceled through prow-github-actions by @Codertocat`
           })
           return true
         }
       )
       .reply(200)
 
-    issueCommentEventAssign.comment.body = '/approve cancel'
-    issueCommentEventAssign.comment.user.login = 'some-user'
-    const commentContext = new utils.mockContext(issueCommentEventAssign)
+    setComment(payload, '/approve cancel')
+    const commentContext = new utils.mockContext(payload, eventName)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
   })
 
   it('removes approval with the /approve cancel command if commenter is collaborator', async () => {
@@ -191,10 +205,10 @@ approvers:
       .get('/repos/Codertocat/Hello-World/contents/OWNERS')
       .reply(404)
 
-    nock(utils.api).get('/orgs/Codertocat/members/some-user').reply(404)
+    nock(utils.api).get('/orgs/Codertocat/members/Codertocat').reply(404)
 
     nock(utils.api)
-      .get('/repos/Codertocat/Hello-World/collaborators/some-user')
+      .get('/repos/Codertocat/Hello-World/collaborators/Codertocat')
       .reply(204)
 
     nock(utils.api)
@@ -206,17 +220,16 @@ approvers:
         '/repos/Codertocat/Hello-World/pulls/1/reviews/80/dismissals',
         body => {
           expect(body).toMatchObject({
-            message: `Canceled through prow-github-actions by @some-user`
+            message: `Canceled through prow-github-actions by @Codertocat`
           })
           return true
         }
       )
       .reply(200)
 
-    issueCommentEventAssign.comment.body = '/approve cancel'
-    issueCommentEventAssign.comment.user.login = 'some-user'
-    const commentContext = new utils.mockContext(issueCommentEventAssign)
+    setComment(payload, '/approve cancel')
+    const commentContext = new utils.mockContext(payload, eventName)
 
-    await handleIssueComment(commentContext)
+    await eventHandler(commentContext)
   })
 })
