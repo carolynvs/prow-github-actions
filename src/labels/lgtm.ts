@@ -56,5 +56,5 @@ export const lgtm = async (
     return
   }
 
-  labelIssue(octokit, context, commentEvent.parent.number, ['lgtm'])
+  await labelIssue(octokit, context, commentEvent.parent.number, ['lgtm'])
 }

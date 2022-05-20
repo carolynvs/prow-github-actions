@@ -12044,7 +12044,7 @@ exports.lgtm = (context = github.context) => __awaiter(void 0, void 0, void 0, f
         }
         return;
     }
-    labeling_1.labelIssue(octokit, context, commentEvent.parent.number, ['lgtm']);
+    yield labeling_1.labelIssue(octokit, context, commentEvent.parent.number, ['lgtm']);
 });
 
 
