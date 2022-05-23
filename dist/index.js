@@ -4422,7 +4422,7 @@ function run() {
                 case 'pull_request':
                     handlePullReq_1.handlePullReq();
                     break;
-                case 'pull_request_review':
+                case 'workflow_run':
                     handleReview_1.handleReview();
                     break;
                 case 'schedule':
@@ -10955,11 +10955,17 @@ const approve_1 = __webpack_require__(575);
 const lgtm_1 = __webpack_require__(541);
 /**
  * This Method handles any pull request reviews
+ * Due to GitHub permissions, it is not triggered directly from the pull_request_reivew
+ * event. Instead it is triggered from workflow_run, and we look up the original event
+ * that triggered the workflow.
  * A user should define which of the commands they want to run in their workflow yaml
  *
  * @param context - the github context of the current action event
  */
 exports.handleReview = (context = github.context) => __awaiter(void 0, void 0, void 0, function* () {
+    const token = core.getInput('github-token', { required: true });
+    const octokit = new github.GitHub(token);
+    context = yield getPullRequestReviewFromTrigger(octokit, context);
     const commandConfig = core
         .getInput('prow-commands', { required: false })
         .replace(/\n/g, ' ')
@@ -10993,6 +10999,18 @@ exports.handleReview = (context = github.context) => __awaiter(void 0, void 0, v
         .catch(e => {
         core.setFailed(`${e}`);
     });
+});
+const getPullRequestReviewFromTrigger = (octokit, context) => __awaiter(void 0, void 0, void 0, function* () {
+    const workflowEvent = context.payload;
+    if (!workflowEvent) {
+        throw Error(`the event payload is not WorkflowRunCompletedEvent`);
+    }
+    const triggerRun = yield octokit.actions.getWorkflowRun(Object.assign(Object.assign({}, context.repo), { 
+        // eslint-disable-next-line @typescript-eslint/camelcase
+        run_id: workflowEvent.workflow_run.id }));
+    core.debug(JSON.stringify(triggerRun.data));
+    throw Error(`not implemented`);
+    return context;
 });
 
 

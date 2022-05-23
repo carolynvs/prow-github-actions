@@ -5,8 +5,16 @@ import {Context} from '@actions/github/lib/context'
 import {approve} from './approve'
 import {lgtm} from '../labels/lgtm'
 
+import {
+  WorkflowRunCompletedEvent,
+  WorkflowRun
+} from '@octokit/webhooks-definitions/schema'
+
 /**
  * This Method handles any pull request reviews
+ * Due to GitHub permissions, it is not triggered directly from the pull_request_reivew
+ * event. Instead it is triggered from workflow_run, and we look up the original event
+ * that triggered the workflow.
  * A user should define which of the commands they want to run in their workflow yaml
  *
  * @param context - the github context of the current action event
@@ -14,6 +22,10 @@ import {lgtm} from '../labels/lgtm'
 export const handleReview = async (
   context: Context = github.context
 ): Promise<void> => {
+  const token = core.getInput('github-token', {required: true})
+  const octokit = new github.GitHub(token)
+  context = await getPullRequestReviewFromTrigger(octokit, context)
+
   const commandConfig = core
     .getInput('prow-commands', {required: false})
     .replace(/\n/g, ' ')
@@ -57,4 +69,25 @@ export const handleReview = async (
     .catch(e => {
       core.setFailed(`${e}`)
     })
+}
+
+const getPullRequestReviewFromTrigger= async (
+  octokit: github.GitHub,
+  context: Context,
+): Promise<Context> => {
+  const workflowEvent = context.payload as WorkflowRunCompletedEvent
+  if (!workflowEvent) {
+    throw Error(`the event payload is not WorkflowRunCompletedEvent`)
+  }
+
+  const triggerRun = await octokit.actions.getWorkflowRun({
+    ...context.repo,
+    // eslint-disable-next-line @typescript-eslint/camelcase
+    run_id: workflowEvent.workflow_run.id
+  })
+
+  core.debug(JSON.stringify(triggerRun.data))
+  
+  throw Error(`not implemented`)
+  return context
 }

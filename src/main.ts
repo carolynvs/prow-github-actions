@@ -16,7 +16,7 @@ async function run(): Promise<void> {
         handlePullReq()
         break
 
-      case 'pull_request_review':
+      case 'workflow_run':
         handleReview()
         break
 
